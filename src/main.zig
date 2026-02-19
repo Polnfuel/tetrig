@@ -1,28 +1,27 @@
 const std = @import("std");
-const tetr = @import("tetr");
-
-const Game = tetr.Game;
+const termenv = @import("termenv");
+const Game = @import("game").Game;
 
 pub fn main() !void {
-    try tetr.init_terminal();
-    defer tetr.deinit_terminal();
-    errdefer tetr.deinit_terminal();
+    try termenv.init_terminal();
+    defer termenv.deinit_terminal();
+    errdefer termenv.deinit_terminal();
 
     var game = try Game.init(0, 0, 10, 20);
     defer game.deinit();
     errdefer game.deinit();
 
-    tetr.set_target_fps(30);
+    termenv.set_target_fps(30);
 
     const fall_speed = 0.4;
-    const fall_frames = tetr.get_fall_frames(fall_speed);
+    const fall_frames = termenv.get_fall_frames(fall_speed);
     var frame_count: u32 = 0;
 
     var game_running = true;
 
-    try tetr.start_loop();
+    try termenv.start_loop();
     game_loop: while (game_running) {
-        const pressed_keys = try tetr.get_pressed_keys();
+        const pressed_keys = try termenv.get_pressed_keys();
 
         for (pressed_keys) |key| {
             switch (key) {
@@ -57,6 +56,6 @@ pub fn main() !void {
         try game.draw();
 
         frame_count += 1;
-        try tetr.end_frame();
+        try termenv.end_frame();
     }
 }

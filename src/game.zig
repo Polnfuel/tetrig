@@ -1,35 +1,5 @@
 const std = @import("std");
-
-var fdin: std.posix.fd_t = undefined;
-var original: std.posix.termios = undefined;
-
-var win_width: u32 = undefined;
-var win_heigth: u32 = undefined;
-
-var stdout_buffer: [2048]u8 = undefined;
-var stdout_writer: std.fs.File.Writer = undefined;
-var stdout: *std.io.Writer = undefined;
-
-var keys_buffer: [16]u8 = undefined;
-var keys_list: KeysArray = undefined;
-
-var time: Timing = undefined;
-
-var alloc_buffer: [2048]u8 = undefined;
-var gpa: std.heap.FixedBufferAllocator = undefined;
-var allocator: std.mem.Allocator = undefined;
-
-pub const Key = enum(u3) {
-    Up,
-    Down,
-    Left,
-    Right,
-    Q,
-    P,
-    Space,
-
-    Undefined,
-};
+const termenv = @import("termenv");
 
 const Color = enum(u3) {
     Red,
@@ -53,8 +23,6 @@ const FigureType = enum(u3) {
     T,
 };
 
-const Rotation = u2;
-
 const RotTry = enum(u3) {
     Can,
     Cannot,
@@ -64,45 +32,9 @@ const RotTry = enum(u3) {
     MoveRightTwice,
 };
 
-const KeysArray = struct {
-    items: [8]Key,
-    len: usize,
+const Rotation = u2;
 
-    pub fn add(self: *KeysArray, key: Key) void {
-        self.items[self.len] = key;
-        self.len += 1;
-    }
-
-    pub fn reset(self: *KeysArray) void {
-        self.len = 0;
-    }
-};
-
-const Timing = struct {
-    target: f32,
-    last_time: f32,
-
-    pub fn set_target(self: *Timing, seconds: f32) void {
-        self.target = seconds;
-    }
-
-    pub fn get_time(self: *Timing) !f32 {
-        _ = self;
-        const ins: std.time.Instant = try std.time.Instant.now();
-        const spec: std.posix.timespec = ins.timestamp;
-        return @as(f32, @floatFromInt(spec.sec)) + @as(f32, @floatFromInt(spec.nsec)) / 1000000000.0;
-    }
-
-    pub fn wait_time(self: *Timing, seconds: f32) void {
-        _ = self;
-        if (seconds < 0) {
-            return;
-        }
-        const sec = @floor(seconds);
-        const nsec: u64 = @intFromFloat((seconds - sec) * 1_000_000_000.0);
-        std.posix.nanosleep(@intFromFloat(sec), nsec);
-    }
-};
+const Position = @Vector(4, i16);
 
 const Prng = struct {
     a: u32,
@@ -131,179 +63,6 @@ const Prng = struct {
     }
 };
 
-fn set_allocator() void {
-    gpa = std.heap.FixedBufferAllocator.init(alloc_buffer[0..]);
-    const alloc = gpa.allocator();
-    allocator = alloc;
-}
-
-fn get_console_size(fd: std.posix.fd_t) void {
-    var winstruct: std.posix.winsize = undefined;
-    _ = std.posix.system.ioctl(fd, std.posix.T.IOCGWINSZ, @intFromPtr(&winstruct));
-    win_width = winstruct.col;
-    win_heigth = winstruct.row;
-}
-
-fn set_nonblocking_mode(fd: std.posix.fd_t) !std.posix.termios {
-    const termios: std.posix.termios = try std.posix.tcgetattr(fd);
-    var raw: std.posix.termios = termios;
-    raw.lflag.ECHO = false;
-    raw.lflag.ICANON = false;
-    try std.posix.tcsetattr(fd, std.posix.TCSA.NOW, raw);
-    const flags = try std.posix.fcntl(fd, std.posix.F.GETFL, 0);
-    const nonblock: usize = 1 << @bitOffsetOf(std.posix.O, "NONBLOCK");
-    _ = try std.posix.fcntl(fd, std.posix.F.SETFL, flags | nonblock);
-    return termios;
-}
-
-fn reset_nonblocking_mode(fd: std.posix.fd_t, termios: *std.posix.termios) !void {
-    const flags = try std.posix.fcntl(fd, std.posix.F.GETFL, 0);
-    const nonblock: usize = 1 << @bitOffsetOf(std.posix.O, "NONBLOCK");
-    _ = try std.posix.fcntl(fd, std.posix.F.SETFL, flags & (~nonblock));
-    termios.lflag.ECHO = true;
-    termios.lflag.ICANON = true;
-    try std.posix.tcsetattr(fd, std.posix.TCSA.NOW, termios.*);
-}
-
-fn set_terminal_styling() !void {
-    _ = try stdout.write("\x1b[5 q");
-    try stdout.flush();
-}
-
-fn reset_terminal_styling() !void {
-    // _ = try stdout.write("\x1b[0m\x1b[1;1H\x1b[J\x1b[0 q");
-    _ = try stdout.write("\x1b[0m\x1b[0 q");
-    try stdout.flush();
-}
-
-fn sleeptime(seconds: f32) void {
-    const sec = @floor(seconds);
-    const nsec: u64 = @intFromFloat((seconds - sec) * 1_000_000_000.0);
-    std.posix.nanosleep(@intFromFloat(sec), nsec);
-}
-
-fn zero_keys_buffer() void {
-    @memset(&keys_buffer, 0);
-}
-
-fn get_keys(buffer: *const [16]u8) void {
-    var read: u32 = 0;
-
-    while (true) {
-        switch (buffer[read]) {
-            27 => {
-                switch (buffer[read + 1]) {
-                    91 => {
-                        switch (buffer[read + 2]) {
-                            65 => {
-                                keys_list.add(.Up);
-                                read += 3;
-                            },
-                            66 => {
-                                keys_list.add(.Down);
-                                read += 3;
-                            },
-                            67 => {
-                                keys_list.add(.Right);
-                                read += 3;
-                            },
-                            68 => {
-                                keys_list.add(.Left);
-                                read += 3;
-                            },
-                            else => {
-                                read += 3;
-                            },
-                        }
-                    },
-                    else => {},
-                }
-            },
-            32 => {
-                keys_list.add(.Space);
-                read += 1;
-            },
-            112 => {
-                keys_list.add(.P);
-                read += 1;
-            },
-            113 => {
-                keys_list.add(.Q);
-                read += 1;
-            },
-            0 => {
-                break;
-            },
-            else => {
-                read += 1;
-            },
-        }
-    }
-}
-
-pub fn init_terminal() !void {
-    fdin = std.posix.STDIN_FILENO;
-    get_console_size(std.posix.STDOUT_FILENO);
-
-    stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    stdout = &stdout_writer.interface;
-
-    original = try set_nonblocking_mode(fdin);
-    try set_terminal_styling();
-
-    keys_list.reset();
-
-    set_allocator();
-}
-
-pub fn deinit_terminal() void {
-    reset_nonblocking_mode(fdin, &original) catch {};
-    reset_terminal_styling() catch {};
-}
-
-pub fn set_target_fps(fps: u32) void {
-    time.set_target(1.0 / @as(f32, @floatFromInt(fps)));
-}
-pub fn get_fall_frames(speed: f32) u32 {
-    const fps = 1.0 / time.target;
-    return @intFromFloat(fps * speed);
-}
-
-pub fn poll_keys() !void {
-    zero_keys_buffer();
-    keys_list.reset();
-
-    const read = std.posix.read(fdin, &keys_buffer) catch |err| blk: {
-        if (err == std.posix.ReadError.WouldBlock) {
-            break :blk 0;
-        } else {
-            return err;
-        }
-    };
-    if (read > 0) {
-        get_keys(&keys_buffer);
-    }
-}
-
-pub fn get_pressed_keys() ![]Key {
-    try poll_keys();
-    return keys_list.items[0..keys_list.len];
-}
-
-pub fn start_loop() !void {
-    time.last_time = try time.get_time();
-}
-
-pub fn end_frame() !void {
-    const current_time = try time.get_time();
-    const elapsed = current_time - time.last_time;
-
-    const wait = time.target - elapsed;
-    time.wait_time(wait);
-
-    time.last_time = try time.get_time();
-}
-
 const RowsArray = struct {
     indices: [4]?usize,
 
@@ -322,25 +81,23 @@ const RowsArray = struct {
     }
 };
 
-const FigIndices = @Vector(4, i16);
-
 const Figure = struct {
     shape: FigureType,
     color: Color,
     rot: Rotation,
-    buffer: FigIndices,
+    buffer: Position,
 
     pub fn init(w: i16, t: FigureType, r: Rotation) Figure {
         const a: Color = @enumFromInt(@intFromEnum(t));
         const mid: i16 = @divFloor(w, 2) - 1;
-        const buf: FigIndices = switch (t) {
-            .I => FigIndices{ mid - 4 * w, mid - 3 * w, mid - 2 * w, mid - w },
-            .O => FigIndices{ mid - 2 * w, mid - 2 * w + 1, mid - w, mid - w + 1 },
-            .L => FigIndices{ mid - 3 * w, mid - 2 * w, mid - w, mid - w + 1 },
-            .J => FigIndices{ mid - 3 * w, mid - 2 * w, mid - w - 1, mid - w },
-            .S => FigIndices{ mid - 2 * w, mid - 2 * w + 1, mid - w - 1, mid - w },
-            .Z => FigIndices{ mid - 2 * w - 1, mid - 2 * w, mid - w, mid - w + 1 },
-            .T => FigIndices{ mid - 2 * w - 1, mid - 2 * w, mid - 2 * w + 1, mid - w },
+        const buf: Position = switch (t) {
+            .I => Position{ mid - 4 * w, mid - 3 * w, mid - 2 * w, mid - w },
+            .O => Position{ mid - 2 * w, mid - 2 * w + 1, mid - w, mid - w + 1 },
+            .L => Position{ mid - 3 * w, mid - 2 * w, mid - w, mid - w + 1 },
+            .J => Position{ mid - 3 * w, mid - 2 * w, mid - w - 1, mid - w },
+            .S => Position{ mid - 2 * w, mid - 2 * w + 1, mid - w - 1, mid - w },
+            .Z => Position{ mid - 2 * w - 1, mid - 2 * w, mid - w, mid - w + 1 },
+            .T => Position{ mid - 2 * w - 1, mid - 2 * w, mid - 2 * w + 1, mid - w },
         };
 
         var fig = Figure{
@@ -357,14 +114,14 @@ const Figure = struct {
     fn rotate(self: *Figure, w: i16, r: Rotation) void {
         const steps: usize = r -% self.rot;
         for (0..steps) |_| {
-            const new_pos: FigIndices = self.try_rotate_once(w);
+            const new_pos: Position = self.try_rotate_once(w);
             self.buffer = new_pos;
             self.rot +%= 1;
         }
     }
 
-    pub fn try_rotate_once(self: *const Figure, w: i16) FigIndices {
-        var new_buffer: FigIndices = undefined;
+    pub fn try_rotate_once(self: *const Figure, w: i16) Position {
+        var new_buffer: Position = undefined;
         switch (self.rot) {
             0 => {
                 switch (self.shape) {
@@ -424,12 +181,12 @@ pub const Game = struct {
     bitset: []u1,
     rand: Prng,
     figure: Figure,
-    shadow: FigIndices,
+    shadow: Position,
     next: Figure,
 
     pub fn init(x: u32, y: u32, width: u32, height: u32) !Game {
-        const cells = try allocator.alloc(Color, width * height);
-        const bits = try allocator.alloc(u1, width * height);
+        const cells = try termenv.allocator.alloc(Color, width * height);
+        const bits = try termenv.allocator.alloc(u1, width * height);
 
         var pr = Prng.init();
         const fig = Figure.init(@intCast(width), pr.rand(FigureType), @truncate(pr.next()));
@@ -444,14 +201,14 @@ pub const Game = struct {
     }
 
     pub fn deinit(self: *Game) void {
-        allocator.free(self.buffer);
-        allocator.free(self.bitset);
+        termenv.allocator.free(self.buffer);
+        termenv.allocator.free(self.bitset);
     }
 
     fn clear_screen(self: *Game) !void {
         _ = self;
-        _ = try stdout.write("\x1b[1;1H\x1b[0m\x1b[J");
-        try stdout.flush();
+        _ = try termenv.stdout.write("\x1b[1;1H\x1b[0m\x1b[J");
+        try termenv.stdout.flush();
     }
 
     fn draw_figure(self: *Game) !void {
@@ -470,11 +227,11 @@ pub const Game = struct {
             if (i >= 0) {
                 const row = self.y + 2 + @divFloor(i, self.w);
                 const col = 2 * (self.x + 1) + 1 + 2 * (@mod(i, self.w));
-                try stdout.print("\x1b[{};{}H\x1b[{}m  ", .{ row, col, color_code });
+                try termenv.stdout.print("\x1b[{};{}H\x1b[{}m  ", .{ row, col, color_code });
             }
         }
-        _ = try stdout.write("\x1b[0m");
-        try stdout.flush();
+        _ = try termenv.stdout.write("\x1b[0m");
+        try termenv.stdout.flush();
     }
     fn draw_shadow(self: *Game) !void {
         const color_code: i32 = switch (self.figure.color) {
@@ -492,11 +249,11 @@ pub const Game = struct {
             if (i >= 0) {
                 const row = self.y + 2 + @divFloor(i, self.w);
                 const col = 2 * (self.x + 1) + 1 + 2 * (@mod(i, self.w));
-                try stdout.print("\x1b[{};{}H\x1b[{}m░░", .{ row, col, color_code });
+                try termenv.stdout.print("\x1b[{};{}H\x1b[{}m░░", .{ row, col, color_code });
             }
         }
-        _ = try stdout.write("\x1b[0m");
-        try stdout.flush();
+        _ = try termenv.stdout.write("\x1b[0m");
+        try termenv.stdout.flush();
     }
     fn draw_next(self: *Game) !void {
         var min_x: i32 = std.math.maxInt(i32);
@@ -504,7 +261,7 @@ pub const Game = struct {
         var min_y: i32 = std.math.maxInt(i32);
         var max_y: i32 = 0;
         const w: i16 = @intCast(self.w);
-        const arr: [4]i16 = self.next.buffer + @as(FigIndices, @splat(4 * w));
+        const arr: [4]i16 = self.next.buffer + @as(Position, @splat(4 * w));
         for (arr) |i| {
             const row: i16 = @divFloor(i, w);
             const col: i16 = @rem(i, w);
@@ -534,10 +291,10 @@ pub const Game = struct {
         for (arr) |i| {
             const row = @divFloor(i, w);
             const col = @rem(i, w);
-            try stdout.print("\x1b[{};{}H\x1b[{}m  ", .{ row + top - min_y, 2 * (col - min_x + left), color_code });
+            try termenv.stdout.print("\x1b[{};{}H\x1b[{}m  ", .{ row + top - min_y, 2 * (col - min_x + left), color_code });
         }
-        _ = try stdout.write("\x1b[0m");
-        try stdout.flush();
+        _ = try termenv.stdout.write("\x1b[0m");
+        try termenv.stdout.flush();
     }
 
     pub fn draw(self: *Game) !void {
@@ -546,61 +303,61 @@ pub const Game = struct {
         const w: u32 = @intCast(self.w);
         const h: u32 = @intCast(self.h);
 
-        try stdout.print("\x1b[{};{}H ▄", .{ self.y + 1, 2 * self.x + 1 });
+        try termenv.stdout.print("\x1b[{};{}H ▄", .{ self.y + 1, 2 * self.x + 1 });
         for (0..@intCast(self.w)) |_| {
-            _ = try stdout.write("▄▄");
+            _ = try termenv.stdout.write("▄▄");
         }
-        _ = try stdout.write("▄");
+        _ = try termenv.stdout.write("▄");
 
         for (0..h) |i| {
-            try stdout.print("\x1b[{};{}H █", .{ self.y + 2 + @as(i32, @intCast(i)), 2 * self.x + 1 });
+            try termenv.stdout.print("\x1b[{};{}H █", .{ self.y + 2 + @as(i32, @intCast(i)), 2 * self.x + 1 });
             for (0..w) |j| {
                 const index = i * w + j;
                 const cell = self.buffer[index];
 
                 switch (cell) {
                     .Red => {
-                        _ = try stdout.write("\x1b[41m  ");
+                        _ = try termenv.stdout.write("\x1b[41m  ");
                     },
                     .Green => {
-                        _ = try stdout.write("\x1b[42m  ");
+                        _ = try termenv.stdout.write("\x1b[42m  ");
                     },
                     .Yellow => {
-                        _ = try stdout.write("\x1b[43m  ");
+                        _ = try termenv.stdout.write("\x1b[43m  ");
                     },
                     .Blue => {
-                        _ = try stdout.write("\x1b[44m  ");
+                        _ = try termenv.stdout.write("\x1b[44m  ");
                     },
                     .Magenta => {
-                        _ = try stdout.write("\x1b[45m  ");
+                        _ = try termenv.stdout.write("\x1b[45m  ");
                     },
                     .Cyan => {
-                        _ = try stdout.write("\x1b[46m  ");
+                        _ = try termenv.stdout.write("\x1b[46m  ");
                     },
                     .Orange => {
-                        _ = try stdout.write("\x1b[101m  ");
+                        _ = try termenv.stdout.write("\x1b[101m  ");
                     },
                     .Empty => {
-                        _ = try stdout.write("\x1b[40m  ");
+                        _ = try termenv.stdout.write("\x1b[40m  ");
                     },
                 }
             }
-            _ = try stdout.write("█\x1b[0m");
-            try stdout.flush();
+            _ = try termenv.stdout.write("█\x1b[0m");
+            try termenv.stdout.flush();
         }
 
-        try stdout.print("\x1b[{};{}H ▀", .{ self.y + 1 + self.h + 1, 2 * self.x + 1 });
+        try termenv.stdout.print("\x1b[{};{}H ▀", .{ self.y + 1 + self.h + 1, 2 * self.x + 1 });
         for (0..@intCast(self.w)) |_| {
-            _ = try stdout.write("▀▀");
+            _ = try termenv.stdout.write("▀▀");
         }
-        _ = try stdout.write("▀ ");
+        _ = try termenv.stdout.write("▀ ");
 
         try self.draw_shadow();
         try self.draw_figure();
         try self.draw_next();
 
-        try stdout.print("\x1b[{};1H ", .{self.y + self.h + 3});
-        try stdout.flush();
+        try termenv.stdout.print("\x1b[{};1H ", .{self.y + self.h + 3});
+        try termenv.stdout.flush();
     }
 
     fn new_figure(self: *Game) void {
@@ -611,7 +368,7 @@ pub const Game = struct {
     }
     fn update_shadow(self: *Game) void {
         var pos = self.figure.buffer;
-        const lower = @as(FigIndices, @splat(@as(i16, @intCast(self.w))));
+        const lower = @as(Position, @splat(@as(i16, @intCast(self.w))));
         loop: while (true) : (pos += lower) {
             const arr: [4]i16 = pos;
             for (arr) |ind| {
@@ -709,7 +466,7 @@ pub const Game = struct {
 
         if (!near_border and !would_collide) {
             //Move left
-            const shift: FigIndices = @splat(-1);
+            const shift: Position = @splat(-1);
             self.figure.buffer += shift;
         }
 
@@ -741,7 +498,7 @@ pub const Game = struct {
 
         if (!near_border and !would_collide) {
             //Move right
-            const shift: FigIndices = @splat(1);
+            const shift: Position = @splat(1);
             self.figure.buffer += shift;
         }
 
@@ -770,12 +527,12 @@ pub const Game = struct {
             return self.place_figure();
         }
 
-        const shift: FigIndices = @splat(@intCast(self.w));
+        const shift: Position = @splat(@intCast(self.w));
         self.figure.buffer += shift;
 
         return true;
     }
-    fn can_collide(self: *Game, new_pos: FigIndices) bool {
+    fn can_collide(self: *Game, new_pos: Position) bool {
         const arr: [4]i16 = new_pos;
         for (arr) |i| {
             if (i < 0 or i >= self.bitset.len) {
@@ -787,7 +544,7 @@ pub const Game = struct {
         }
         return false;
     }
-    fn borders_rotation(self: *Game, new_pos: FigIndices) RotTry {
+    fn borders_rotation(self: *Game, new_pos: Position) RotTry {
         var left = false;
         var right = false;
         const arr: [4]i16 = new_pos;
@@ -833,10 +590,10 @@ pub const Game = struct {
     pub fn rotate_figure(self: *Game) bool {
         defer self.update_shadow();
 
-        const new_pos: FigIndices = self.figure.try_rotate_once(@intCast(self.w));
+        const new_pos: Position = self.figure.try_rotate_once(@intCast(self.w));
         const borders = self.borders_rotation(new_pos);
 
-        var to_try: FigIndices = undefined;
+        var to_try: Position = undefined;
 
         switch (borders) {
             .Can => {
@@ -846,22 +603,22 @@ pub const Game = struct {
                 return true;
             },
             .MoveLeft => {
-                const shifted: FigIndices = self.figure.buffer + @as(FigIndices, @splat(-1));
+                const shifted: Position = self.figure.buffer + @as(Position, @splat(-1));
                 const fig = Figure{ .buffer = shifted, .color = self.figure.color, .rot = self.figure.rot, .shape = self.figure.shape };
                 to_try = fig.try_rotate_once(@intCast(self.w));
             },
             .MoveRight => {
-                const shifted: FigIndices = self.figure.buffer + @as(FigIndices, @splat(1));
+                const shifted: Position = self.figure.buffer + @as(Position, @splat(1));
                 const fig = Figure{ .buffer = shifted, .color = self.figure.color, .rot = self.figure.rot, .shape = self.figure.shape };
                 to_try = fig.try_rotate_once(@intCast(self.w));
             },
             .MoveLeftTwice => {
-                const shifted: FigIndices = self.figure.buffer + @as(FigIndices, @splat(-2));
+                const shifted: Position = self.figure.buffer + @as(Position, @splat(-2));
                 const fig = Figure{ .buffer = shifted, .color = self.figure.color, .rot = self.figure.rot, .shape = self.figure.shape };
                 to_try = fig.try_rotate_once(@intCast(self.w));
             },
             .MoveRightTwice => {
-                const shifted: FigIndices = self.figure.buffer + @as(FigIndices, @splat(2));
+                const shifted: Position = self.figure.buffer + @as(Position, @splat(2));
                 const fig = Figure{ .buffer = shifted, .color = self.figure.color, .rot = self.figure.rot, .shape = self.figure.shape };
                 to_try = fig.try_rotate_once(@intCast(self.w));
             },

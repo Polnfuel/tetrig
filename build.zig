@@ -3,10 +3,15 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize: std.builtin.OptimizeMode = .Debug;
-    const mod = b.addModule("tetr", .{
-        .root_source_file = b.path("src/root.zig"),
+
+    const termenv = b.addModule("termenv", .{
+        .root_source_file = b.path("src/termenv.zig"),
         .target = target,
     });
+
+    const game = b.addModule("game", .{ .root_source_file = b.path("src/game.zig"), .target = target, .imports = &.{
+        .{ .name = "termenv", .module = termenv },
+    } });
 
     const exe = b.addExecutable(.{
         .name = "tetr",
@@ -15,7 +20,8 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "tetr", .module = mod },
+                .{ .name = "termenv", .module = termenv },
+                .{ .name = "game", .module = game },
             },
         }),
         .use_llvm = true,
