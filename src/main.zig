@@ -30,10 +30,10 @@ pub fn main() !void {
                     game_running = false;
                 },
                 .Left => {
-                    game_running = game.move_figure(-1, 0);
+                    game_running = game.move_left();
                 },
                 .Right => {
-                    game_running = game.move_figure(1, 0);
+                    game_running = game.move_right();
                 },
                 .Down => {
                     game_running = game.place_down();
@@ -49,7 +49,7 @@ pub fn main() !void {
         }
 
         if (frame_count % fall_frames == 0) {
-            if (game.move_figure(0, 1) == false) {
+            if (game.move_down() == false) {
                 break :game_loop;
             }
         }

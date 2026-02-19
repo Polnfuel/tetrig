@@ -354,7 +354,7 @@ const Figure = struct {
         return fig;
     }
 
-    pub fn rotate(self: *Figure, w: i16, r: Rotation) void {
+    fn rotate(self: *Figure, w: i16, r: Rotation) void {
         const steps: usize = r -% self.rot;
         for (0..steps) |_| {
             const new_pos: FigIndices = self.try_rotate_once(w);
@@ -363,7 +363,7 @@ const Figure = struct {
         }
     }
 
-    fn try_rotate_once(self: *Figure, w: i16) FigIndices {
+    pub fn try_rotate_once(self: *const Figure, w: i16) FigIndices {
         var new_buffer: FigIndices = undefined;
         switch (self.rot) {
             0 => {
@@ -625,7 +625,6 @@ pub const Game = struct {
             }
         }
     }
-
     fn add_to_bitset(self: *Game) bool {
         const arr: [4]i16 = self.figure.buffer;
         for (arr) |i| {
@@ -668,66 +667,127 @@ pub const Game = struct {
             @memmove(self.buffer[@as(usize, @intCast(self.w)) .. ind + @as(usize, @intCast(self.w))], self.buffer[0..ind]);
         }
     }
-    fn check_borders(self: *Game, dx: i16, dy: i16, x_y: *[2]bool) void {
+    fn should_place(self: *Game) bool {
         const arr: [4]i16 = self.figure.buffer;
         for (arr) |i| {
-            const row = @divFloor(i, self.w);
-            const col = @mod(i, self.w);
-            if ((col == 0 and dx == -1) or (col == self.w - 1 and dx == 1)) {
-                x_y[0] = false;
-            }
-            if (row == self.h - 1 and dy == 1) {
-                x_y[1] = false;
+            const lower = i + self.w;
+            if (lower < 0) continue;
+            if (lower >= self.bitset.len or self.bitset[@intCast(lower)] == 1) {
+                return true;
             }
         }
+        return false;
     }
-    fn check_blocks(self: *Game, dx: FigIndices, dy: FigIndices, x_y: *[2]bool) void {
-        const x = self.figure.buffer + dx;
-        const arr_x: [4]i16 = x;
-        for (arr_x) |i| {
-            if (i >= 0) {
-                const ind: usize = @intCast(i);
-                if (self.bitset[ind] == 1) {
-                    x_y[0] = false;
-                }
-            }
+    fn place_figure(self: *Game) bool {
+        const added = self.add_to_bitset();
+        if (!added) {
+            return false;
         }
-        if (x_y[1]) {
-            const y = self.figure.buffer + dy;
-            const arr_y: [4]i16 = y;
-            for (arr_y) |i| {
-                if (i >= 0) {
-                    const ind: usize = @intCast(i);
-                    if (self.bitset[ind] == 1) {
-                        x_y[1] = false;
-                    }
-                }
-            }
-        }
-    }
-    pub fn move_figure(self: *Game, dx: i16, dy: i16) bool {
-        const dxvec: FigIndices = @splat(dx);
-        const dyvec: FigIndices = @splat(@as(i16, @truncate(dy * self.w)));
-        var x_y = [2]bool{ true, true };
-        self.check_borders(dx, dy, &x_y);
-        self.check_blocks(dxvec, dyvec, &x_y);
 
+        self.clear_rows();
+        self.new_figure();
+        return true;
+    }
+    pub fn move_left(self: *Game) bool {
         defer self.update_shadow();
 
-        if (x_y[0]) {
-            self.figure.buffer += dxvec;
+        //Check left border and other blocks
+        var near_border = false;
+        var would_collide = false;
+        const arr: [4]i16 = self.figure.buffer;
+        for (arr) |i| {
+            const col = @rem(i, self.w);
+            if (col == 0) {
+                near_border = true;
+                break;
+            }
+            if (i >= 0 and self.bitset[@intCast(i - 1)] == 1) {
+                would_collide = true;
+                break;
+            }
         }
-        if (x_y[1]) {
-            self.figure.buffer += dyvec;
-        } else if (self.add_to_bitset()) {
-            self.clear_rows();
-            self.new_figure();
-        } else {
-            return false;
+
+        if (!near_border and !would_collide) {
+            //Move left
+            const shift: FigIndices = @splat(-1);
+            self.figure.buffer += shift;
+        }
+
+        const placed = self.should_place();
+        if (placed) {
+            return self.place_figure();
+        }
+
+        return true;
+    }
+    pub fn move_right(self: *Game) bool {
+        defer self.update_shadow();
+
+        //Check right border and other blocks
+        var near_border = false;
+        var would_collide = false;
+        const arr: [4]i16 = self.figure.buffer;
+        for (arr) |i| {
+            const col = @rem(i, self.w);
+            if (col == self.w - 1) {
+                near_border = true;
+                break;
+            }
+            if (i >= 0 and i < self.bitset.len - 1 and self.bitset[@intCast(i + 1)] == 1) {
+                would_collide = true;
+                break;
+            }
+        }
+
+        if (!near_border and !would_collide) {
+            //Move right
+            const shift: FigIndices = @splat(1);
+            self.figure.buffer += shift;
+        }
+
+        const placed = self.should_place();
+        if (placed) {
+            return self.place_figure();
+        }
+
+        return true;
+    }
+    pub fn place_down(self: *Game) bool {
+        const shw: [4]i16 = self.shadow;
+        const fig: [4]i16 = self.figure.buffer;
+        const to_move: i16 = @divExact(shw[0] - fig[0], @as(i16, @intCast(self.w)));
+        for (0..@intCast(to_move)) |_| {
+            const res = self.move_down();
+            if (!res) {
+                return false;
+            }
         }
         return true;
     }
-    fn check_borders_rotate(self: *Game, new_pos: FigIndices) RotTry {
+    pub fn move_down(self: *Game) bool {
+        const placed = self.should_place();
+        if (placed) {
+            return self.place_figure();
+        }
+
+        const shift: FigIndices = @splat(@intCast(self.w));
+        self.figure.buffer += shift;
+
+        return true;
+    }
+    fn can_collide(self: *Game, new_pos: FigIndices) bool {
+        const arr: [4]i16 = new_pos;
+        for (arr) |i| {
+            if (i < 0 or i >= self.bitset.len) {
+                continue;
+            }
+            if (self.bitset[@intCast(i)] == 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+    fn borders_rotation(self: *Game, new_pos: FigIndices) RotTry {
         var left = false;
         var right = false;
         const arr: [4]i16 = new_pos;
@@ -770,63 +830,49 @@ pub const Game = struct {
             return .Can;
         }
     }
-    fn check_blocks_rotate(self: *Game, new_pos: FigIndices) bool {
-        const arr: [4]i16 = new_pos;
-        for (arr) |i| {
-            if (i < 0 or i >= self.bitset.len) {
-                continue;
-            }
-            if (self.bitset[@intCast(i)] == 1) {
-                return false;
-            }
-        }
-        return true;
-    }
     pub fn rotate_figure(self: *Game) bool {
-        const new_pos: FigIndices = self.figure.try_rotate_once(@intCast(self.w));
-        const blocks = self.check_blocks_rotate(new_pos);
-        const borders = self.check_borders_rotate(new_pos);
-        var continued: bool = true;
-
         defer self.update_shadow();
 
-        if (blocks) {
-            var pos: FigIndices = undefined;
-            var res: bool = undefined;
-            switch (borders) {
-                .Can => {
-                    continued = true;
-                },
-                .Cannot => {
-                    return continued;
-                },
-                .MoveLeft => {
-                    continued = self.move_figure(-1, 0);
-                },
-                .MoveRight => {
-                    continued = self.move_figure(1, 0);
-                },
-                .MoveLeftTwice => {
-                    continued = self.move_figure(-2, 0);
-                },
-                .MoveRightTwice => {
-                    continued = self.move_figure(2, 0);
-                },
-            }
-            pos = self.figure.try_rotate_once(@intCast(self.w));
-            res = self.check_blocks_rotate(pos);
-            if (res) {
-                self.figure.buffer = pos;
-                self.figure.rot +%= 1;
-            }
+        const new_pos: FigIndices = self.figure.try_rotate_once(@intCast(self.w));
+        const borders = self.borders_rotation(new_pos);
+
+        var to_try: FigIndices = undefined;
+
+        switch (borders) {
+            .Can => {
+                to_try = new_pos;
+            },
+            .Cannot => {
+                return true;
+            },
+            .MoveLeft => {
+                const shifted: FigIndices = self.figure.buffer + @as(FigIndices, @splat(-1));
+                const fig = Figure{ .buffer = shifted, .color = self.figure.color, .rot = self.figure.rot, .shape = self.figure.shape };
+                to_try = fig.try_rotate_once(@intCast(self.w));
+            },
+            .MoveRight => {
+                const shifted: FigIndices = self.figure.buffer + @as(FigIndices, @splat(1));
+                const fig = Figure{ .buffer = shifted, .color = self.figure.color, .rot = self.figure.rot, .shape = self.figure.shape };
+                to_try = fig.try_rotate_once(@intCast(self.w));
+            },
+            .MoveLeftTwice => {
+                const shifted: FigIndices = self.figure.buffer + @as(FigIndices, @splat(-2));
+                const fig = Figure{ .buffer = shifted, .color = self.figure.color, .rot = self.figure.rot, .shape = self.figure.shape };
+                to_try = fig.try_rotate_once(@intCast(self.w));
+            },
+            .MoveRightTwice => {
+                const shifted: FigIndices = self.figure.buffer + @as(FigIndices, @splat(2));
+                const fig = Figure{ .buffer = shifted, .color = self.figure.color, .rot = self.figure.rot, .shape = self.figure.shape };
+                to_try = fig.try_rotate_once(@intCast(self.w));
+            },
         }
 
-        return continued;
-    }
-    pub fn place_down(self: *Game) bool {
-        const shw: [4]i16 = self.shadow;
-        const fig: [4]i16 = self.figure.buffer;
-        const to_move: i16 = @divExact(shw[0] - fig[0], @as(i16, @intCast(self.w)));
-        return self.move_figure(0, to_move);
+        const collision = self.can_collide(to_try);
+        if (!collision) {
+            self.figure.buffer = to_try;
+            self.figure.rot +%= 1;
+        }
+
+        return true;
     }
 };
