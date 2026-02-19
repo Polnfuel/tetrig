@@ -1,0 +1,12 @@
+.{
+    .name = .tetr,
+    .version = "0.0.0",
+    .fingerprint = 0x7e5d4dfea86dd6eb,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
