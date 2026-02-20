@@ -106,13 +106,12 @@ fn reset_nonblocking_mode(fd: std.posix.fd_t, termios: *std.posix.termios) !void
 }
 
 fn set_terminal_styling() !void {
-    _ = try stdout.write("\x1b[5 q");
+    _ = try stdout.write("\x1b[?25l");
     try stdout.flush();
 }
 
 fn reset_terminal_styling() !void {
-    // _ = try stdout.write("\x1b[0m\x1b[1;1H\x1b[J\x1b[0 q");
-    _ = try stdout.write("\x1b[0m\x1b[0 q");
+    _ = try stdout.write("\x1b[0m\x1b[?25h");
     try stdout.flush();
 }
 

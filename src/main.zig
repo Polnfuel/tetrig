@@ -38,8 +38,35 @@ fn finishing_screen(score: u32) !void {
     try termenv.stdout.flush();
 }
 
+fn pause_screen() !bool {
+    const center_x = termenv.win_width / 2;
+    const center_y = termenv.win_heigth / 2;
+    try termenv.stdout.print("\x1b[{};{}H\x1b[30;106m         ", .{ center_y - 2, center_x - 3 });
+    try termenv.stdout.print("\x1b[{};{}H\x1b[30;106m  PAUSE  ", .{ center_y - 1, center_x - 3 });
+    try termenv.stdout.print("\x1b[{};{}H\x1b[30;106m         ", .{ center_y, center_x - 3 });
+    try termenv.stdout.print("\x1b[{};{}H\x1b[30;106m P to unpause \x1b[0m", .{ center_y + 1, center_x - 6 });
+    try termenv.stdout.flush();
+
+    while (true) {
+        const keys = try termenv.get_pressed_keys();
+        for (keys) |key| {
+            switch (key) {
+                .P => {
+                    return true;
+                },
+                .Q => {
+                    return false;
+                },
+                else => {},
+            }
+        }
+
+        termenv.sleeptime(0.3);
+    }
+}
+
 fn check_proper_terminal_size(w: u32, h: u32) bool {
-    if (termenv.win_width >= 2 * (w + 7) and termenv.win_heigth >= h + 2) {
+    if (termenv.win_width >= 2 * (w + 8) and termenv.win_heigth >= h + 2) {
         return true;
     }
     return false;
@@ -51,8 +78,8 @@ const Origin = struct {
 };
 
 fn centered_board_coords(w: u32, h: u32) Origin {
-    const x = (termenv.win_width / 2 - (w + 7)) / 2;
-    const y = (termenv.win_heigth - h) / 2;
+    const x = (termenv.win_width / 2 - (w + 8)) / 2;
+    const y = (termenv.win_heigth - (h + 2)) / 2;
     return Origin{ .x = x, .y = y };
 }
 
@@ -107,6 +134,9 @@ pub fn main() !void {
                 },
                 .Up => {
                     game_running = game.rotate_figure();
+                },
+                .P => {
+                    game_running = try pause_screen();
                 },
                 else => {},
             }
