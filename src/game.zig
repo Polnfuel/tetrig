@@ -183,6 +183,7 @@ pub const Game = struct {
     figure: Figure,
     shadow: Position,
     next: Figure,
+    score: u32,
 
     pub fn init(x: u32, y: u32, width: u32, height: u32) !Game {
         const cells = try termenv.allocator.alloc(Color, width * height);
@@ -195,7 +196,7 @@ pub const Game = struct {
         @memset(cells, .Empty);
         @memset(bits, 0);
 
-        var game = Game{ .x = @intCast(x), .y = @intCast(y), .w = @intCast(width), .h = @intCast(height), .buffer = cells, .bitset = bits, .rand = pr, .figure = fig, .shadow = undefined, .next = next };
+        var game = Game{ .x = @intCast(x), .y = @intCast(y), .w = @intCast(width), .h = @intCast(height), .buffer = cells, .bitset = bits, .rand = pr, .figure = fig, .shadow = undefined, .next = next, .score = 0 };
         game.update_shadow();
         return game;
     }
@@ -203,12 +204,6 @@ pub const Game = struct {
     pub fn deinit(self: *Game) void {
         termenv.allocator.free(self.buffer);
         termenv.allocator.free(self.bitset);
-    }
-
-    fn clear_screen(self: *Game) !void {
-        _ = self;
-        _ = try termenv.stdout.write("\x1b[1;1H\x1b[0m\x1b[J");
-        try termenv.stdout.flush();
     }
 
     fn draw_figure(self: *Game) !void {
@@ -220,7 +215,7 @@ pub const Game = struct {
             .Magenta => 45,
             .Cyan => 46,
             .Orange => 101,
-            .Empty => 40,
+            .Empty => unreachable,
         };
         const arr: [4]i16 = self.figure.buffer;
         for (arr) |i| {
@@ -231,7 +226,6 @@ pub const Game = struct {
             }
         }
         _ = try termenv.stdout.write("\x1b[0m");
-        try termenv.stdout.flush();
     }
     fn draw_shadow(self: *Game) !void {
         const color_code: i32 = switch (self.figure.color) {
@@ -253,9 +247,8 @@ pub const Game = struct {
             }
         }
         _ = try termenv.stdout.write("\x1b[0m");
-        try termenv.stdout.flush();
     }
-    fn draw_next(self: *Game) !void {
+    fn draw_next_and_score(self: *Game) !void {
         var min_x: i32 = std.math.maxInt(i32);
         var max_x: i32 = 0;
         var min_y: i32 = std.math.maxInt(i32);
@@ -293,18 +286,18 @@ pub const Game = struct {
             const col = @rem(i, w);
             try termenv.stdout.print("\x1b[{};{}H\x1b[{}m  ", .{ row + top - min_y, 2 * (col - min_x + left), color_code });
         }
+        try termenv.stdout.print("\x1b[{};{}H\x1b[0m{d:>6}", .{ self.y + 9, 2 * (self.x + self.w + 4), self.score });
         _ = try termenv.stdout.write("\x1b[0m");
-        try termenv.stdout.flush();
     }
 
     pub fn draw(self: *Game) !void {
-        try self.clear_screen();
-
         const w: u32 = @intCast(self.w);
         const h: u32 = @intCast(self.h);
 
+        _ = try termenv.stdout.write("\x1b[1;1H\x1b[0m\x1b[J");
+
         try termenv.stdout.print("\x1b[{};{}H ▄", .{ self.y + 1, 2 * self.x + 1 });
-        for (0..@intCast(self.w)) |_| {
+        for (0..w) |_| {
             _ = try termenv.stdout.write("▄▄");
         }
         _ = try termenv.stdout.write("▄");
@@ -347,14 +340,14 @@ pub const Game = struct {
         }
 
         try termenv.stdout.print("\x1b[{};{}H ▀", .{ self.y + 1 + self.h + 1, 2 * self.x + 1 });
-        for (0..@intCast(self.w)) |_| {
+        for (0..w) |_| {
             _ = try termenv.stdout.write("▀▀");
         }
         _ = try termenv.stdout.write("▀ ");
 
         try self.draw_shadow();
         try self.draw_figure();
-        try self.draw_next();
+        try self.draw_next_and_score();
 
         try termenv.stdout.print("\x1b[{};1H ", .{self.y + self.h + 3});
         try termenv.stdout.flush();
@@ -422,6 +415,7 @@ pub const Game = struct {
             const ind = (rows.indices[n].? + n) * @as(usize, @intCast(self.w));
             @memmove(self.bitset[@as(usize, @intCast(self.w)) .. ind + @as(usize, @intCast(self.w))], self.bitset[0..ind]);
             @memmove(self.buffer[@as(usize, @intCast(self.w)) .. ind + @as(usize, @intCast(self.w))], self.buffer[0..ind]);
+            self.score += 100;
         }
     }
     fn should_place(self: *Game) bool {

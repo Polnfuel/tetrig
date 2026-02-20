@@ -3,8 +3,8 @@ const std = @import("std");
 var fdin: std.posix.fd_t = undefined;
 var original: std.posix.termios = undefined;
 
-var win_width: u32 = undefined;
-var win_heigth: u32 = undefined;
+pub var win_width: u32 = undefined;
+pub var win_heigth: u32 = undefined;
 
 var stdout_buffer: [2048]u8 = undefined;
 var stdout_writer: std.fs.File.Writer = undefined;
@@ -116,7 +116,7 @@ fn reset_terminal_styling() !void {
     try stdout.flush();
 }
 
-fn sleeptime(seconds: f32) void {
+pub fn sleeptime(seconds: f32) void {
     const sec = @floor(seconds);
     const nsec: u64 = @intFromFloat((seconds - sec) * 1_000_000_000.0);
     std.posix.nanosleep(@intFromFloat(sec), nsec);
