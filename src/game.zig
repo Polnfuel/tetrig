@@ -336,7 +336,6 @@ pub const Game = struct {
                 }
             }
             _ = try termenv.stdout.write("█\x1b[0m");
-            try termenv.stdout.flush();
         }
 
         try termenv.stdout.print("\x1b[{};{}H ▀", .{ self.y + 1 + self.h + 1, 2 * self.x + 1 });

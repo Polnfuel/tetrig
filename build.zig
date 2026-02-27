@@ -4,14 +4,26 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize: std.builtin.OptimizeMode = .Debug;
 
-    const termenv = b.addModule("termenv", .{
-        .root_source_file = b.path("src/termenv.zig"),
+    const winspec = b.addModule("winspec", .{
+        .root_source_file = b.path("src/winspec.zig"),
         .target = target,
     });
 
-    const game = b.addModule("game", .{ .root_source_file = b.path("src/game.zig"), .target = target, .imports = &.{
-        .{ .name = "termenv", .module = termenv },
-    } });
+    const termenv = b.addModule("termenv", .{
+        .root_source_file = b.path("src/termenv.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "winspec", .module = winspec },
+        },
+    });
+
+    const game = b.addModule("game", .{
+        .root_source_file = b.path("src/game.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "termenv", .module = termenv },
+        },
+    });
 
     const exe = b.addExecutable(.{
         .name = "tetr",
