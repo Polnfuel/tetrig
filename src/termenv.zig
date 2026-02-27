@@ -86,7 +86,7 @@ const Timing = struct {
             },
             else => {
                 const spec: std.posix.timespec = ins.timestamp;
-                return spec.sec * 1_000_000_000.0 + spec.nsec;
+                return @intCast(spec.sec * 1_000_000_000 + spec.nsec);
             },
         }
     }
@@ -277,7 +277,7 @@ pub fn poll_keys() !void {
             get_keys();
         }
     } else {
-        const read = std.posix.read(fdin, &keys_buffer) catch |err| blk: {
+        const read = std.posix.read(fdin, &keys_buffer.items) catch |err| blk: {
             if (err == std.posix.ReadError.WouldBlock) {
                 break :blk 0;
             } else {
@@ -285,7 +285,7 @@ pub fn poll_keys() !void {
             }
         };
         if (read > 0) {
-            get_keys(&keys_buffer);
+            get_keys();
         }
     }
 }
